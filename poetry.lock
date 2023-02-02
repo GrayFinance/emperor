@@ -98,14 +98,6 @@ websocket-client = ">=1.3.3"
 test = ["pytest (>=7.2.0)", "pytest-cov"]
 
 [[package]]
-name = "package"
-version = "0.1.1"
-description = "package is a package to package your package"
-category = "main"
-optional = false
-python-versions = "*"
-
-[[package]]
 name = "packaging"
 version = "23.0"
 description = "Core utilities for Python packages"
@@ -197,7 +189,7 @@ test = ["websockets"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.9.0"
-content-hash = "6ad73183ca4b4df23a96fbfbf440d292868806d25a1c04e15b2d61ac0ccb65cc"
+content-hash = "6528dd11bc1ba98901a4bbc02dbc725d52ade4b8fc6c283b9ae76ed6326eb7fa"
 
 [metadata.files]
 atomicwrites = [
@@ -313,9 +305,6 @@ more-itertools = [
 nostr = [
     {file = "nostr-0.0.2-py3-none-any.whl", hash = "sha256:3d17d22dbd3aecf1ddf8cc72e330f14702e159fb0f43320d1ac88142db96aaba"},
     {file = "nostr-0.0.2.tar.gz", hash = "sha256:5c0c472f69764ae57870710d6b3bfe584df3ccdb0e2e3cd3f302f6b848124d24"},
-]
-package = [
-    {file = "package-0.1.1.tar.gz", hash = "sha256:01eee19a56a936bd63222f0a3c531fcdba37b5ad1bd833b960d62fb960b4955e"},
 ]
 packaging = [
     {file = "packaging-23.0-py3-none-any.whl", hash = "sha256:714ac14496c3e68c99c29b00845f7a2b85f3bb6f1078fd9f72fd20f0570002b2"},

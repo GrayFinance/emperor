@@ -2,98 +2,165 @@ from nostr.relay_manager import RelayManager
 from nostr.message_type import ClientMessageType
 from nostr.filter import Filter, Filters
 from nostr.event import Event
-from nostr.key import PrivateKey
+from nostr.key import PrivateKey, PublicKey
 from os.path import exists
 from secrets import token_hex
+from base64 import b64encode, b64decode
 
 import time
-import json 
+import json
 import ssl
 
-with open("data/relays.json", "r") as relaysFile:
-    relays = json.load(relaysFile)
+import logging
+import click
 
-def publish(key: PrivateKey, public_key: str, data: dict) -> dict:
-    relay_manager = RelayManager()
-    for relay in relays:
-        relay_manager.add_relay(relay)
-    
-    relay_manager.open_connections({"cert_reqs": ssl.CERT_NONE})
-    time.sleep(1)
-    
-    message = key.encrypt_message(message=json.dumps(data), public_key_hex=public_key)
-    message = json.dumps({"data": message, "type": "emperor"})
+# Initialization logging and setting basic settings.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
 
-    event = Event(public_key=key.public_key.hex(), content=message, kind=892)
-    key.sign_event(event)
-    while True:
-        try:
-            relay_manager.publish_event(event)
-            break
-        except KeyboardInterrupt:
-            exit()
-        except:
-            continue
-    
-    relay_manager.close_connections()
-    return { "publish_id": event.id }
-
-def subscribe(key: PrivateKey, public_key: str, event_id: str):
-    identity = token_hex(5)
-    
-    filters = Filters([Filter(
-        event_ids=[event_id],
-        authors=[public_key], 
-        kinds=[892]
-    )])
-    request = [ClientMessageType.REQUEST, identity]
-    request.extend(filters.to_json_array())
-
-    relay_manager = RelayManager()
-    for relay in relays:
-        relay_manager.add_relay(relay)
-    
-    relay_manager.add_subscription(identity, filters)
-    relay_manager.open_connections({"cert_reqs": ssl.CERT_NONE})
-    time.sleep(2)
-    
-    message = json.dumps(request)
-    while True:
-        try:
-            relay_manager.publish_message(message)
-            break
-        except KeyboardInterrupt:
-            exit()
-        except:
-            pass
-    
-    time.sleep(1)
-    while relay_manager.message_pool.has_events():
-        try:
-            content = relay_manager.message_pool.get_event().event.content
-            content = json.loads(content)
-        except KeyboardInterrupt:
-            exit()
-        except:
-            continue
-        
-        if (content.get("type") == "emperor"):
-            content = key.decrypt_message(content["data"], key.public_key.hex())
-            
-    relay_manager.close_connections()
-
-def main():
+@click.group()
+@click.pass_context
+def cli(ctx: object):
     if not (exists("keychain.key") == True):
         key = PrivateKey()
         pub = key.public_key
         with open("keychain.key", "w") as w:
-            json.dump({
-                "key": key.bech32(), 
-                "pub": pub.bech32()
-            }, w)
+            json.dump({"key": key.bech32(), "pub": pub.bech32()}, w)
     else:
         with open("keychain.key", "r") as r:
             data = json.load(r)
 
         key = PrivateKey.from_nsec(data["key"])
         pub = key.public_key.from_npub(data["pub"])
+
+    with open("data/relays.json", "r") as relaysFile:
+        relays = json.load(relaysFile)
+
+    ctx.obj = {"relays": relays, "key": key, "pub": pub.bech32()}
+    
+@cli.command()
+@click.option("--message", help="Message that will be encrypted and sent to the relays.")
+@click.option("--file", type=click.File('rb'))
+@click.option("--public-key", help="Public key that will be used to encrypt the message.")
+@click.pass_context
+def push(ctx: object, message: str, file: object, public_key: str) -> dict:
+    """Push message / file to replays in encrypted form."""
+    if (file) and not (message):
+        message = b64encode(file.read()).decode("utf-8")
+    
+    relay_manager = RelayManager()
+    for relay in ctx.obj["relays"]:
+        relay_manager.add_relay(relay)
+
+    logging.info("Opening connection to all relays.")
+    relay_manager.open_connections({"cert_reqs": ssl.CERT_NONE})
+    logging.info("Waiting 10s for the client to connect to the websocket.")
+    time.sleep(10)
+    
+    key = ctx.obj["key"]
+    
+    logging.info("Encrypting the data that will be sent to the relays.")
+    message = key.encrypt_message(message=json.dumps(message), public_key_hex=public_key)
+    if (file):
+        message = json.dumps({"data": message, "type": "file"})
+    else:
+        message = json.dumps({"data": message, "type": "message"})
+    
+    event = Event(public_key=key.public_key.hex(), content=message, kind=892)
+
+    logging.info("Signing encrypted message.")
+    key.sign_event(event)
+
+    number_of_attempts = 0
+    while True:
+        number_of_attempts += 1
+        logging.info(
+            f"This is the #{number_of_attempts} attempt to send messages to the relays.")
+        try:
+            relay_manager.publish_event(event)
+            logging.info(
+                f"Encrypted message {event.id} sent to relays with sucess.")
+            break
+        except KeyboardInterrupt:
+            logging.error("CTRL + C goodbye!")
+            exit()
+        except:
+            logging.error(
+                "Unable to send the encrypted message to the relays.")
+            time.sleep(1)
+            continue
+    
+    relay_manager.close_connections()
+    
+    print(json.dumps({"publish_id": event.id, "public_key": ctx.obj["pub"]}, indent=3))
+
+@cli.command()
+@click.option("--publish-id", help="Identification referring to the publication of the message in the relays.")
+@click.option("--public-key", help="Public key that will be used to encrypt the message.")
+@click.pass_context
+def pull(ctx: object, publish_id: str, public_key: str):
+    """Pull message / file from relays."""
+    
+    relay_manager = RelayManager()
+    for relay in ctx.obj["relays"]:
+        relay_manager.add_relay(relay)
+
+    public_key = PublicKey.from_npub(public_key).hex()
+    
+    identity = token_hex(5)
+    filters = Filters([Filter(
+        event_ids=[publish_id],
+        authors=[public_key],
+        kinds=[892]
+    )])
+    request = [ClientMessageType.REQUEST, identity]
+    request.extend(filters.to_json_array())
+    
+    relay_manager.add_subscription(identity, filters)
+
+    logging.info("Opening connection to all relays.")
+    relay_manager.open_connections({"cert_reqs": ssl.CERT_NONE})
+    logging.info("Waiting 10s for the client to connect to the websocket.")
+    time.sleep(15)
+
+    message = json.dumps(request)
+    number_of_attempts = 0
+    while True:
+        number_of_attempts += 1
+        logging.info(f"This is the #{number_of_attempts} attempt to send messages to the relays.")
+        try:
+            relay_manager.publish_message(message)
+            logging.info(f"Message {message} sent to relays with sucess.")
+            break
+        except KeyboardInterrupt:
+            logging.error("CTRL + C goodbye!")
+            exit()
+        except:
+            logging.error("Unable to send message to the relays.")
+            time.sleep(1)
+            pass
+
+    time.sleep(1)
+    key = ctx.obj["key"]
+    logging.info("Fetching messages from relays.")
+    while relay_manager.message_pool.has_events():
+        try:
+            message = relay_manager.message_pool.get_event()            
+            content = json.loads(message.event.content)
+            content = key.decrypt_message(content["data"], key.public_key.hex())
+        except:
+            break
+            
+        filename = token_hex(16) + ".txt"
+        if (content.get("type") == "file"):
+            content = b64decode(content["data"])
+        else:
+            content = content["data"]
+        
+        with open(filename, "wb") as w:
+            w.write(filename)
+
+        print(json.dumps({"filename": filename}))
+        break
