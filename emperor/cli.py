@@ -54,7 +54,7 @@ def push(ctx: object, message: str, file: object, public_key: str) -> dict:
     for relay in ctx.obj["relays"]:
         relay_manager.add_relay(relay)
 
-    logging.info("Opening connection to all relays.")
+    logging.info("Opening connection to all relays: " + json.dumps(ctx.obj["relays"]))
     relay_manager.open_connections({"cert_reqs": ssl.CERT_NONE})
     logging.info("Waiting 10s for the client to connect to the websocket.")
     time.sleep(10)
@@ -93,7 +93,6 @@ def push(ctx: object, message: str, file: object, public_key: str) -> dict:
             continue
     
     relay_manager.close_connections()
-    
     print(json.dumps({"publish_id": event.id, "public_key": ctx.obj["pub"]}, indent=3))
 
 @cli.command()
@@ -108,10 +107,8 @@ def pull(ctx: object, publish_id: str, public_key: str):
         relay_manager.add_relay(relay)
 
     public_key = PublicKey.from_npub(public_key).hex()
-    
     identity = token_hex(5)
     filters = Filters([Filter(
-        event_ids=[publish_id],
         authors=[public_key],
         kinds=[892]
     )])
@@ -120,9 +117,9 @@ def pull(ctx: object, publish_id: str, public_key: str):
     
     relay_manager.add_subscription(identity, filters)
 
-    logging.info("Opening connection to all relays.")
+    logging.info("Opening connection to all relays: " + json.dumps(ctx.obj["relays"]))
     relay_manager.open_connections({"cert_reqs": ssl.CERT_NONE})
-    logging.info("Waiting 10s for the client to connect to the websocket.")
+    logging.info("Waiting 15s for the client to connect to the websocket.")
     time.sleep(15)
 
     message = json.dumps(request)
@@ -142,17 +139,18 @@ def pull(ctx: object, publish_id: str, public_key: str):
             time.sleep(1)
             pass
 
-    time.sleep(1)
+    time.sleep(5)
+    
     key = ctx.obj["key"]
     logging.info("Fetching messages from relays.")
     while relay_manager.message_pool.has_events():
-        try:
-            message = relay_manager.message_pool.get_event()            
-            content = json.loads(message.event.content)
-            content = key.decrypt_message(content["data"], key.public_key.hex())
-        except:
-            break
-            
+        event = relay_manager.message_pool.get_event() 
+        if (event.event.id != publish_id):
+            continue
+                          
+        content = json.loads(event.event.content)
+        content["data"] = key.decrypt_message(content["data"], key.public_key.hex())
+        
         filename = token_hex(16) + ".txt"
         if (content.get("type") == "file"):
             content = b64decode(content["data"])
@@ -160,7 +158,9 @@ def pull(ctx: object, publish_id: str, public_key: str):
             content = content["data"]
         
         with open(filename, "wb") as w:
-            w.write(filename)
-
-        print(json.dumps({"filename": filename}))
+            w.write(content)
+        
+        logging.info(f"Saved in: {filename}")
         break
+    
+    relay_manager.close_connections()
