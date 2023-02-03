@@ -23,6 +23,10 @@ logging.basicConfig(
 @click.group()
 @click.pass_context
 def cli(ctx: object):
+    """This software is designed to transfer files in a decentralized way, without the need for a central server.
+    It works through "nostr" relays, that is, you can use multiple relays to guarantee the availability and robustness of the
+    file transference.
+    """
     if not (exists("keychain.key") == True):
         key = PrivateKey()
         pub = key.public_key
@@ -46,7 +50,7 @@ def cli(ctx: object):
 @click.option("--public-key", help="Public key that will be used to encrypt the message.")
 @click.pass_context
 def push(ctx: object, message: str, file: object, public_key: str) -> dict:
-    """Push message / file to replays in encrypted form."""
+    """Push the file or message to the configured relays."""
     if (file) and not (message):
         message = b64encode(file.read()).decode("utf-8")
     
@@ -100,7 +104,7 @@ def push(ctx: object, message: str, file: object, public_key: str) -> dict:
 @click.option("--public-key", help="Public key that will be used to encrypt the message.")
 @click.pass_context
 def pull(ctx: object, publish_id: str, public_key: str):
-    """Pull message / file from relays."""
+    """Pull a specific file or message from our relays."""
     
     relay_manager = RelayManager()
     for relay in ctx.obj["relays"]:
@@ -154,13 +158,14 @@ def pull(ctx: object, publish_id: str, public_key: str):
         filename = token_hex(16) + ".txt"
         if (content.get("type") == "file"):
             content = b64decode(content["data"])
+            with open(filename, "wb") as w:
+                w.write(content)
+            
+            logging.info(f"Saved in: {filename}")
         else:
             content = content["data"]
-        
-        with open(filename, "wb") as w:
-            w.write(content)
-        
-        logging.info(f"Saved in: {filename}")
+            logging.info("Message: " + content)
+
         break
     
     relay_manager.close_connections()
